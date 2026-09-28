@@ -1,5 +1,9 @@
-﻿import 'package:flutter/material.dart';
-import 'package:al_akram_law/screens/auth/register_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../services/supabase_service.dart';
+import '../home/home_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,20 +16,98 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _password = TextEditingController();
-  bool _obscure = true;
+
   bool _loading = false;
+  bool _obscure = true;
 
-  InputDecoration _dec(String label, IconData icon) => InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-      );
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
 
-  void _login() {
-    if (_formKey.currentState?.validate() ?? false) {
-      setState(() => _loading = true);
-      // login logic
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
     }
+
+    setState(() => _loading = true);
+
+    try {
+      if (SupabaseService.isConfigured) {
+        await SupabaseService.signIn(
+          _email.text.trim(),
+          _password.text,
+        );
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final savedEmail = prefs.getString('accountEmail');
+        final savedPassword = prefs.getString('accountPassword');
+
+        if (savedEmail == null || savedPassword == null) {
+          throw Exception('لا يوجد حساب على هذا الجهاز.');
+        }
+
+        final emailMatches =
+            savedEmail.toLowerCase() == _email.text.trim().toLowerCase();
+        final passwordMatches = savedPassword == _password.text;
+
+        if (!emailMatches || !passwordMatches) {
+          throw Exception('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
+        }
+
+        await prefs.setBool('isLoggedIn', true);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (_) => false,
+      );
+    } catch (e) {
+      if (mounted) {
+        _show(_friendly(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  String _friendly(Object error) {
+    final message = error.toString();
+
+    if (message.contains('Invalid login credentials')) {
+      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+    }
+
+    if (message.contains('Email not confirmed')) {
+      return 'يرجى تأكيد البريد الإلكتروني قبل تسجيل الدخول.';
+    }
+
+    return message.replaceFirst('Exception: ', '');
+  }
+
+  void _show(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text)),
+    );
+  }
+
+  InputDecoration _dec(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
   }
 
   @override
@@ -37,7 +119,11 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             children: [
               const SizedBox(height: 60),
-              const Icon(Icons.balance, color: Color(0xFFD4AF37), size: 90),
+              const Icon(
+                Icons.balance,
+                color: Color(0xFFD4AF37),
+                size: 90,
+              ),
               const SizedBox(height: 15),
               const Text(
                 'الأكرم للمحاماة',
@@ -56,7 +142,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 padding: const EdgeInsets.fromLTRB(26, 30, 26, 26),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(30),
+                  ),
                 ),
                 child: Form(
                   key: _formKey,
@@ -78,24 +166,42 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: _email,
                         keyboardType: TextInputType.emailAddress,
                         textDirection: TextDirection.ltr,
-                        decoration: _dec('البريد الإلكتروني', Icons.email_outlined),
-                        validator: (v) => v == null || !v.contains('@')
-                            ? 'أدخل بريداً إلكترونياً صحيحاً'
-                            : null,
+                        decoration: _dec(
+                          'البريد الإلكتروني',
+                          Icons.email_outlined,
+                        ),
+                        validator: (value) {
+                          if (value == null || !value.contains('@')) {
+                            return 'أدخل بريداً إلكترونياً صحيحاً';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 15),
                       TextFormField(
                         controller: _password,
                         obscureText: _obscure,
-                        decoration: _dec('كلمة المرور', Icons.lock_outline).copyWith(
+                        decoration: _dec(
+                          'كلمة المرور',
+                          Icons.lock_outline,
+                        ).copyWith(
                           suffixIcon: IconButton(
-                            onPressed: () => setState(() => _obscure = !_obscure),
-                            icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
+                            onPressed: () {
+                              setState(() => _obscure = !_obscure);
+                            },
+                            icon: Icon(
+                              _obscure
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
                           ),
                         ),
-                        validator: (v) => v == null || v.length < 6
-                            ? 'كلمة المرور 6 أحرف على الأقل'
-                            : null,
+                        validator: (value) {
+                          if (value == null || value.length < 6) {
+                            return 'كلمة المرور 6 أحرف على الأقل';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 22),
                       SizedBox(
@@ -108,7 +214,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             foregroundColor: Colors.white,
                           ),
                           child: _loading
-                              ? const CircularProgressIndicator(color: Colors.white)
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white,
+                                )
                               : const Text(
                                   'تسجيل الدخول',
                                   style: TextStyle(
@@ -120,10 +228,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const RegisterScreen()),
-                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RegisterScreen(),
+                            ),
+                          );
+                        },
                         child: const Text('إنشاء حساب جديد'),
                       ),
                     ],
