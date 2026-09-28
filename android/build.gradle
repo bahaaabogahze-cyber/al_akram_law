@@ -1,4 +1,4 @@
-﻿
+
 subprojects {
     afterEvaluate { project ->
         if (project.hasProperty('android')) {
