@@ -9,6 +9,9 @@ class SessionsScreen extends StatefulWidget {
 }
 
 class _SessionsScreenState extends State<SessionsScreen> {
+  bool _isSameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   DateTime _selectedDay = DateTime.now();
   DateTime _focusedDay = DateTime.now();
 
