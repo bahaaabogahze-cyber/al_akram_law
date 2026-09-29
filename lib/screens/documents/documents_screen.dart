@@ -23,13 +23,28 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _load() async {
-    final all = await LocalStore.getDocuments();
-    if (!mounted) return;
-    setState(() {
-      _documents = widget.caseId == null
+    try {
+      final all = await LocalStore.getDocuments();
+      final filtered = widget.caseId == null
           ? all
           : all.where((d) => d['caseId']?.toString() == widget.caseId).toList();
-    });
+      await LocalStore.resolveDocumentFiles(filtered);
+      if (!mounted) return;
+      setState(() => _documents = filtered);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر تحميل المستندات: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  String _dateLabel(dynamic raw) {
+    final d = DateTime.tryParse(raw?.toString() ?? '');
+    if (d == null) return raw?.toString() ?? '';
+    final l = d.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${l.year}-${two(l.month)}-${two(l.day)} ${two(l.hour)}:${two(l.minute)}';
   }
 
   Future<void> _capture(ImageSource source) async {
@@ -59,8 +74,22 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Future<void> _delete(Map<String, dynamic> doc) async {
-    await LocalStore.deleteDocument(doc['id'].toString());
-    _load();
+    try {
+      await LocalStore.deleteDocument(doc['id'].toString());
+      final local = doc['path']?.toString();
+      if (local != null && local.isNotEmpty) {
+        try {
+          final f = File(local);
+          if (f.existsSync()) await f.delete();
+        } catch (_) {}
+      }
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر حذف المستند: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   @override
@@ -114,6 +143,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   Widget _card(Map<String, dynamic> d) {
     final path = d['path']?.toString() ?? '';
     final exists = path.isNotEmpty && File(path).existsSync();
+    final signedUrl = d['signedUrl']?.toString() ?? '';
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
@@ -123,10 +153,19 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           height: 64,
           child: exists
               ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(File(path), fit: BoxFit.cover))
-              : const Icon(Icons.insert_drive_file, size: 42),
+              : signedUrl.isNotEmpty
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        signedUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Icon(Icons.insert_drive_file, size: 42),
+                      ),
+                    )
+                  : const Icon(Icons.insert_drive_file, size: 42),
         ),
         title: Text(d['title'] ?? 'مستند'),
-        subtitle: Text('${d['notes'] ?? ''}\n${d['createdAt'] ?? ''}', maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: Text('${d['notes'] ?? ''}\n${_dateLabel(d['createdAt'])}', maxLines: 2, overflow: TextOverflow.ellipsis),
         isThreeLine: true,
         onTap: () async {
           await Navigator.push(context, MaterialPageRoute(

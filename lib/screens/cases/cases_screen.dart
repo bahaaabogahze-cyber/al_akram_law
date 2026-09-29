@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/colors.dart';
 import '../../services/local_store.dart';
@@ -14,6 +16,8 @@ class _CasesScreenState extends State<CasesScreen> {
   List<Map<String, dynamic>> _cases = [];
   String _query = '';
   String _status = 'الكل';
+  Timer? _searchDebounce;
+  List<Map<String, dynamic>> _filteredCases = [];
 
   @override
   void initState() {
@@ -21,19 +25,53 @@ class _CasesScreenState extends State<CasesScreen> {
     _load();
   }
 
+  bool _loading = false;
+
   Future<void> _load() async {
-    final data = await LocalStore.getCases();
-    if (mounted) setState(() => _cases = data);
+    if (!mounted) return;
+    setState(() => _loading = true);
+    try {
+      final data = await LocalStore.getCases();
+      if (mounted) {
+        setState(() {
+          _cases = data;
+          _applyFilter();
+        });
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تحميل القضايا: $e')));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
-  List<Map<String, dynamic>> get _filtered {
-    return _cases.where((c) {
-      final text = '${c['title']} ${c['caseNumber']} ${c['client']} ${c['court']}'.toLowerCase();
-      final q = _query.trim().toLowerCase();
+  void _applyFilter() {
+    final q = _query.trim().toLowerCase();
+    _filteredCases = _cases.where((c) {
+      final text =
+          '${c['title'] ?? ''} ${c['caseNumber'] ?? ''} ${c['client'] ?? ''} ${c['court'] ?? ''}'
+              .toLowerCase();
       final matchesQuery = q.isEmpty || text.contains(q);
       final matchesStatus = _status == 'الكل' || c['status'] == _status;
       return matchesQuery && matchesStatus;
     }).toList();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() {
+        _query = value;
+        _applyFilter();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
   }
 
   @override
@@ -46,13 +84,13 @@ class _CasesScreenState extends State<CasesScreen> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: Column(
+      body: _loading && _cases.isEmpty ? const Center(child: CircularProgressIndicator()) : Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: TextField(
               textDirection: TextDirection.rtl,
-              onChanged: (v) => setState(() => _query = v),
+              onChanged: _onSearchChanged,
               decoration: InputDecoration(
                 hintText: 'ابحث برقم القضية أو اسم الموكل أو المحكمة',
                 prefixIcon: const Icon(Icons.search),
@@ -76,21 +114,26 @@ class _CasesScreenState extends State<CasesScreen> {
                         child: ChoiceChip(
                           label: Text(s),
                           selected: _status == s,
-                          onSelected: (_) => setState(() => _status = s),
+                          onSelected: (_) {
+                          setState(() {
+                            _status = s;
+                            _applyFilter();
+                          });
+                        },
                         ),
                       ))
                   .toList(),
             ),
           ),
           Expanded(
-            child: _filtered.isEmpty
+            child: _filteredCases.isEmpty
                 ? _empty()
                 : RefreshIndicator(
                     onRefresh: _load,
                     child: ListView.builder(
                       padding: const EdgeInsets.all(16),
-                      itemCount: _filtered.length,
-                      itemBuilder: (_, i) => _caseCard(_filtered[i]),
+                      itemCount: _filteredCases.length,
+                      itemBuilder: (_, i) => _caseCard(_filteredCases[i]),
                     ),
                   ),
           ),
@@ -148,7 +191,7 @@ class _CasesScreenState extends State<CasesScreen> {
           child: Row(
             children: [
               CircleAvatar(
-                backgroundColor: color.withOpacity(.12),
+                backgroundColor: color.withValues(alpha: .12),
                 child: Icon(Icons.folder, color: color),
               ),
               const SizedBox(width: 12),
@@ -164,7 +207,7 @@ class _CasesScreenState extends State<CasesScreen> {
                   ],
                 ),
               ),
-              Chip(label: Text(status), backgroundColor: color.withOpacity(.12)),
+              Chip(label: Text(status), backgroundColor: color.withValues(alpha: .12)),
             ],
           ),
         ),

@@ -29,4 +29,6 @@ language sql stable security invoker as $$
   limit greatest(1, least(max_results,100));
 $$;
 
+revoke all on function public.search_legal_articles(text,text,integer) from public, anon;
 grant execute on function public.search_legal_articles(text,text,integer) to authenticated;
+

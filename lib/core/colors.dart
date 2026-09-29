@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const Color primary = Color(0xFF1A237E);
+  // Al-Akram visual identity: formal dark navy + modern cyan accent.
+  static const Color primary = Color(0xFF071A33);
+  static const Color primaryLight = Color(0xFF102B4C);
+  static const Color accent = Color(0xFF36C5F0);
   static const Color secondary = Color(0xFFD4AF37);
-  static const Color background = Color(0xFFF5F5F5);
+  static const Color background = Color(0xFFF4F7FA);
+  static const Color surface = Colors.white;
   static const Color white = Colors.white;
-  static const Color black = Color(0xFF212121);
-  static const Color grey = Color(0xFF9E9E9E);
-  static const Color success = Color(0xFF4CAF50);
-  static const Color error = Color(0xFFE53935);
-  static const Color warning = Color(0xFFFF9800);
+  static const Color black = Color(0xFF17202A);
+  static const Color grey = Color(0xFF7B8794);
+  static const Color success = Color(0xFF2E9D68);
+  static const Color error = Color(0xFFD64545);
+  static const Color warning = Color(0xFFE59A23);
 }

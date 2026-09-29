@@ -28,37 +28,39 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
-    if (!_formKey.currentState!.validate()) {
+    if (!_formKey.currentState!.validate() || _loading) {
       return;
     }
 
     setState(() => _loading = true);
 
     try {
-      if (SupabaseService.isConfigured) {
-        await SupabaseService.signIn(
-          _email.text.trim(),
-          _password.text,
+      // Supabase Auth is the only authentication method.
+      // The password is never stored in SharedPreferences.
+      if (!SupabaseService.isConfigured) {
+        throw Exception(
+          'خدمة تسجيل الدخول غير مهيأة. تحقق من إعدادات Supabase.',
         );
-      } else {
-        final prefs = await SharedPreferences.getInstance();
-        final savedEmail = prefs.getString('accountEmail');
-        final savedPassword = prefs.getString('accountPassword');
-
-        if (savedEmail == null || savedPassword == null) {
-          throw Exception('لا يوجد حساب على هذا الجهاز.');
-        }
-
-        final emailMatches =
-            savedEmail.toLowerCase() == _email.text.trim().toLowerCase();
-        final passwordMatches = savedPassword == _password.text;
-
-        if (!emailMatches || !passwordMatches) {
-          throw Exception('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
-        }
-
-        await prefs.setBool('isLoggedIn', true);
       }
+
+      final email = _email.text.trim();
+
+      await SupabaseService.signIn(
+        email,
+        _password.text,
+      );
+
+      final profile = await SupabaseService.getProfile();
+
+      // Store only non-sensitive display information locally.
+      // Never store the password or an authentication credential here.
+      final prefs = await SharedPreferences.getInstance();
+
+      await prefs.setString(
+        'userName',
+        (profile?['full_name'] ?? 'المحامي').toString(),
+      );
+      await prefs.setString('userEmail', email);
 
       if (!mounted) {
         return;
@@ -91,6 +93,12 @@ class _LoginScreenState extends State<LoginScreen> {
       return 'يرجى تأكيد البريد الإلكتروني قبل تسجيل الدخول.';
     }
 
+    if (message.contains('Network') ||
+        message.contains('Socket') ||
+        message.contains('Failed host lookup')) {
+      return 'تعذر الاتصال بالخادم. تحقق من الإنترنت ثم حاول مرة أخرى.';
+    }
+
     return message.replaceFirst('Exception: ', '');
   }
 
@@ -113,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1A237E),
+      backgroundColor: const Color(0xFF071A33),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
@@ -157,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           style: TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
-                            color: Color(0xFF1A237E),
+                            color: Color(0xFF071A33),
                           ),
                         ),
                       ),
@@ -171,7 +179,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           Icons.email_outlined,
                         ),
                         validator: (value) {
-                          if (value == null || !value.contains('@')) {
+                          if (value == null ||
+                              value.trim().isEmpty ||
+                              !value.contains('@')) {
                             return 'أدخل بريداً إلكترونياً صحيحاً';
                           }
                           return null;
@@ -210,7 +220,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: ElevatedButton(
                           onPressed: _loading ? null : _login,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1A237E),
+                            backgroundColor: const Color(0xFF071A33),
                             foregroundColor: Colors.white,
                           ),
                           child: _loading
@@ -228,14 +238,16 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const RegisterScreen(),
-                            ),
-                          );
-                        },
+                        onPressed: _loading
+                            ? null
+                            : () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const RegisterScreen(),
+                                  ),
+                                );
+                              },
                         child: const Text('إنشاء حساب جديد'),
                       ),
                     ],

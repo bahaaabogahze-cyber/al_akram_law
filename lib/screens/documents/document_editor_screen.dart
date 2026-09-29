@@ -21,6 +21,7 @@ class _DocumentEditorScreenState extends State<DocumentEditorScreen> {
   late final TextEditingController _notes;
   late final TextEditingController _tags;
   bool _saving = false;
+  bool _loadingRemote = false;
 
   @override
   void initState() {
@@ -29,6 +30,31 @@ class _DocumentEditorScreenState extends State<DocumentEditorScreen> {
     _title = TextEditingController(text: widget.existing?['title'] ?? 'مستند قانوني');
     _notes = TextEditingController(text: widget.existing?['notes'] ?? '');
     _tags = TextEditingController(text: widget.existing?['tags'] ?? '');
+    _prepareRemote();
+  }
+
+  bool get _remote => SupabaseService.isConfigured && SupabaseService.user != null;
+
+  // إذا كان المستند محفوظاً في السحابة ولا توجد نسخة محلية منه على هذا الجهاز، ننزّله من Storage.
+  Future<void> _prepareRemote() async {
+    final e = widget.existing;
+    if (e == null || !_remote) return;
+    final local = _path;
+    if (local != null && local.isNotEmpty && File(local).existsSync()) return;
+    final sp = e['storagePath']?.toString();
+    if (sp == null || sp.isEmpty) return;
+    _loadingRemote = true;
+    try {
+      final bytes = await SupabaseService.downloadDocument(sp);
+      final ext = sp.contains('.') ? sp.split('.').last.toLowerCase() : 'jpg';
+      final target = await LocalStore.localDocumentPath(e['id'].toString(), ext);
+      await File(target).writeAsBytes(bytes, flush: true);
+      if (mounted) setState(() => _path = target);
+    } catch (err) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تحميل صورة المستند: $err')));
+    } finally {
+      if (mounted) setState(() => _loadingRemote = false);
+    }
   }
 
   @override
@@ -67,33 +93,51 @@ class _DocumentEditorScreenState extends State<DocumentEditorScreen> {
       return;
     }
     setState(() => _saving = true);
-    final id = widget.existing?['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString();
-    final dir = await getApplicationDocumentsDirectory();
-    final source = File(_path!);
-    final extension = _path!.contains('.') ? _path!.split('.').last : 'jpg';
-    final permanentPath = '${dir.path}/legal_doc_$id.$extension';
-    if (source.path != permanentPath) {
-      await source.copy(permanentPath);
-    }
-    String? storagePath;
-    if (SupabaseService.isConfigured && SupabaseService.user != null) {
-      storagePath = await SupabaseService.uploadDocument(File(permanentPath), id);
-    }
-    await LocalStore.saveDocument({
-      'id': id,
-      'caseId': widget.existing?['caseId'] ?? widget.caseId,
-      'path': permanentPath,
-      'storagePath': storagePath,
-      'title': _title.text.trim().isEmpty ? 'مستند قانوني' : _title.text.trim(),
-      'notes': _notes.text.trim(),
-      'tags': _tags.text.trim(),
-      'createdAt': widget.existing?['createdAt'] ?? DateTime.now().toString().substring(0, 19),
-      'updatedAt': DateTime.now().toString().substring(0, 19),
-    });
-    await LocalStore.addNotification('تم حفظ مستند', _title.text.trim().isEmpty ? 'مستند قانوني' : _title.text.trim());
-    if (mounted) {
-      setState(() => _saving = false);
-      Navigator.pop(context, true);
+    final oldStoragePath = widget.existing?['storagePath']?.toString();
+    String? uploadedPath;
+    try {
+      final id = widget.existing?['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString();
+      final source = File(_path!);
+      final extension = _path!.contains('.') ? _path!.split('.').last.toLowerCase() : 'jpg';
+      final permanentPath = await LocalStore.localDocumentPath(id, extension);
+      if (source.path != permanentPath) {
+        await source.copy(permanentPath);
+      }
+      String? storagePath = oldStoragePath;
+      if (_remote) {
+        storagePath = await SupabaseService.uploadDocument(File(permanentPath), id);
+        uploadedPath = storagePath;
+      }
+      final title = _title.text.trim().isEmpty ? 'مستند قانوني' : _title.text.trim();
+      await LocalStore.saveDocument({
+        'id': id,
+        'caseId': widget.existing?['caseId'] ?? widget.caseId,
+        'path': permanentPath,
+        'storagePath': storagePath,
+        'title': title,
+        'notes': _notes.text.trim(),
+        'tags': _tags.text.trim(),
+        'createdAt': widget.existing?['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      // إذا تغيّر امتداد الصورة بعد التعديل، نحذف الملف القديم من Storage حتى لا يبقى يتيماً.
+      if (_remote && oldStoragePath != null && oldStoragePath.isNotEmpty && oldStoragePath != storagePath) {
+        try { await SupabaseService.deleteStorageFile(oldStoragePath); } catch (_) {}
+      }
+      await LocalStore.addNotification('تم حفظ مستند', title);
+      if (mounted) {
+        setState(() => _saving = false);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      // فشل الحفظ: لا نترك ملفاً مرفوعاً بلا سجل في قاعدة البيانات.
+      if (uploadedPath != null && uploadedPath != oldStoragePath) {
+        try { await SupabaseService.deleteStorageFile(uploadedPath); } catch (_) {}
+      }
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حفظ المستند: $e'), backgroundColor: Colors.red));
+      }
     }
   }
 
@@ -122,7 +166,9 @@ class _DocumentEditorScreenState extends State<DocumentEditorScreen> {
                     borderRadius: BorderRadius.circular(16),
                     child: Image.file(File(_path!), fit: BoxFit.contain),
                   )
-                : const Text('لا توجد صورة'),
+                : _loadingRemote
+                    ? const CircularProgressIndicator()
+                    : const Text('لا توجد صورة'),
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
@@ -135,18 +181,20 @@ class _DocumentEditorScreenState extends State<DocumentEditorScreen> {
           _field(_tags, 'الوسوم (مثال: عقد، وكالة، حكم)', Icons.sell_outlined),
           _field(_notes, 'ملاحظات المحامي على المستند', Icons.notes, maxLines: 5),
           const SizedBox(height: 8),
-          const Card(
+          Card(
             child: Padding(
-              padding: EdgeInsets.all(14),
+              padding: const EdgeInsets.all(14),
               child: Text(
-                'ملاحظة: النسخة الحالية تحفظ المستند والصورة المعدّلة وبياناتها على الجهاز. للمزامنة السحابية والنسخ الاحتياطي بين الأجهزة يلزم ربط قاعدة بيانات وحساب مستخدم.',
-                style: TextStyle(color: Colors.black54),
+                _remote
+                    ? 'يتم حفظ المستند والصورة المعدّلة في حسابك على السحابة، ويبقى متاحاً على أجهزتك بعد إغلاق التطبيق.'
+                    : 'ملاحظة: النسخة الحالية تحفظ المستند والصورة المعدّلة وبياناتها على الجهاز. للمزامنة السحابية والنسخ الاحتياطي بين الأجهزة يلزم ربط قاعدة بيانات وحساب مستخدم.',
+                style: const TextStyle(color: Colors.black54),
               ),
             ),
           ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _saving ? null : _save,
+            onPressed: (_saving || _loadingRemote) ? null : _save,
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54), backgroundColor: AppColors.primary),
             icon: _saving ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.save),
             label: Text(_saving ? 'جاري الحفظ...' : 'حفظ المستند'),

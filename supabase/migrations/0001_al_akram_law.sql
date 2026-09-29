@@ -43,7 +43,9 @@ create table if not exists public.documents (
 
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null, body text, read boolean not null default false, created_at timestamptz not null default now()
+  title text not null, body text, read boolean not null default false,
+  related_type text, related_id text,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.tasks (

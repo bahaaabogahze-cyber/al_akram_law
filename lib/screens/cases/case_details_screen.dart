@@ -38,7 +38,7 @@ class _CaseDetailsScreenState extends State<CaseDetailsScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('حذف القضية؟'),
-        content: const Text('سيتم حذف بيانات القضية من هذا الجهاز.'),
+        content: const Text('سيتم حذف القضية وجميع المستندات المرتبطة بها من قاعدة البيانات. لا يمكن التراجع عن هذه العملية.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),

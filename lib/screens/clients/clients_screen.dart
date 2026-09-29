@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/colors.dart';
 import '../../services/local_store.dart';
@@ -12,14 +14,20 @@ class _ClientsScreenState extends State<ClientsScreen> {
   List<Map<String, dynamic>> _clients = [];
   bool _loading = true;
   String _query = '';
+  Timer? _searchDebounce;
 
   @override void initState() { super.initState(); _load(); }
-  @override void dispose() { _search.dispose(); super.dispose(); }
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
 
   Future<void> _load() async {
     try {
       final data = await LocalStore.getClients();
-      if (mounted) setState(() { _clients = data; _loading = false; });
+      if (mounted) setState(() { _clients = List<Map<String, dynamic>>.from(data); _loading = false; });
     } catch (e) { if (mounted) { setState(() => _loading = false); _snack('تعذر تحميل الموكلين: $e'); } }
   }
 
@@ -45,7 +53,7 @@ class _ClientsScreenState extends State<ClientsScreen> {
         _field(name, 'الاسم الكامل', Icons.person, required: true),
         _field(national, 'الرقم الوطني', Icons.badge),
         _field(phone, 'الهاتف', Icons.phone, type: TextInputType.phone),
-        _field(email, 'البريد الإلكتروني', Icons.email, type: TextInputType.emailAddress),
+        _field(email, 'البريد الإلكتروني', Icons.email, type: TextInputType.emailAddress, email: true),
         _field(address, 'العنوان', Icons.location_on),
         _field(notes, 'ملاحظات', Icons.notes, maxLines: 3),
         const SizedBox(height: 8),
@@ -65,16 +73,82 @@ class _ClientsScreenState extends State<ClientsScreen> {
   }
 
   InputDecoration _dec(String label, IconData icon) => InputDecoration(labelText: label, prefixIcon: Icon(icon), border: const OutlineInputBorder());
-  Widget _field(TextEditingController c, String label, IconData icon, {bool required = false, TextInputType? type, int maxLines = 1}) => Padding(padding: const EdgeInsets.only(bottom: 10), child: TextFormField(controller: c, keyboardType: type, maxLines: maxLines, textDirection: TextDirection.rtl, decoration: _dec(label, icon), validator: required ? (v) => v == null || v.trim().isEmpty ? 'هذا الحقل مطلوب' : null : null));
+  Widget _field(
+    TextEditingController c,
+    String label,
+    IconData icon, {
+    bool required = false,
+    bool email = false,
+    TextInputType? type,
+    int maxLines = 1,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: TextFormField(
+          controller: c,
+          keyboardType: type,
+          maxLines: maxLines,
+          textDirection: TextDirection.rtl,
+          decoration: _dec(label, icon),
+          validator: (v) {
+            final value = v?.trim() ?? '';
+            if (required && value.isEmpty) return 'هذا الحقل مطلوب';
+            if (email && value.isNotEmpty) {
+              final valid =
+                  RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
+              if (!valid) return 'أدخل بريدًا إلكترونيًا صحيحًا';
+            }
+            return null;
+          },
+        ),
+      );
   void _snack(String s) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
 
   @override Widget build(BuildContext context) {
     return Scaffold(backgroundColor: AppColors.background, appBar: AppBar(title: const Text('الموكلون')), body: Column(children: [
-      Container(color: AppColors.primary, padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: TextField(controller: _search, onChanged: (v) => setState(() => _query = v), textDirection: TextDirection.rtl, style: const TextStyle(color: Colors.black), decoration: InputDecoration(hintText: 'ابحث باسم الموكل أو الهاتف أو الرقم الوطني', filled: true, fillColor: Colors.white, prefixIcon: const Icon(Icons.search), suffixIcon: _query.isEmpty ? null : IconButton(onPressed: () { _search.clear(); setState(() => _query = ''); }, icon: const Icon(Icons.clear)), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)))),
+      Container(color: AppColors.primary, padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: TextField(controller: _search, onChanged: (v) {
+          _searchDebounce?.cancel();
+          _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+            if (!mounted) return;
+            setState(() => _query = v.trim());
+          });
+        }, textDirection: TextDirection.rtl, style: const TextStyle(color: Colors.black), decoration: InputDecoration(hintText: 'ابحث باسم الموكل أو الهاتف أو الرقم الوطني', filled: true, fillColor: Colors.white, prefixIcon: const Icon(Icons.search), suffixIcon: _query.isEmpty ? null : IconButton(onPressed: () { _searchDebounce?.cancel(); _search.clear(); setState(() => _query = ''); }, icon: const Icon(Icons.clear)), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none)))),
       Padding(padding: const EdgeInsets.all(16), child: Row(children: [Expanded(child: _stat('${_clients.length}', 'إجمالي الموكلين', Icons.people)), const SizedBox(width: 10), Expanded(child: _stat('${_clients.where((c) => (c['notes'] ?? '').toString().isNotEmpty).length}', 'لديهم ملاحظات', Icons.notes))])),
       Expanded(child: _loading ? const Center(child: CircularProgressIndicator()) : _filtered.isEmpty ? const Center(child: Text('لا توجد بيانات موكلين بعد.')) : RefreshIndicator(onRefresh: _load, child: ListView.builder(padding: const EdgeInsets.symmetric(horizontal: 16), itemCount: _filtered.length, itemBuilder: (_, i) => _card(_filtered[i])))),
     ]), floatingActionButton: FloatingActionButton.extended(onPressed: () => _showEditor(), backgroundColor: AppColors.primary, icon: const Icon(Icons.person_add, color: Colors.white), label: const Text('إضافة موكل', style: TextStyle(color: Colors.white))));
   }
   Widget _stat(String n, String l, IconData i) => Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(children: [Icon(i, color: AppColors.primary), const SizedBox(height: 4), Text(n, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 19)), Text(l, style: const TextStyle(fontSize: 11))])));
-  Widget _card(Map<String, dynamic> c) => Card(margin: const EdgeInsets.only(bottom: 10), child: ListTile(onTap: () => _showEditor(c), leading: CircleAvatar(backgroundColor: AppColors.primary.withOpacity(.1), child: Text((c['full_name'] ?? 'م').toString().characters.first, style: const TextStyle(color: AppColors.primary))), title: Text(c['full_name'] ?? 'بدون اسم', style: const TextStyle(fontWeight: FontWeight.bold)), subtitle: Text([if ((c['phone'] ?? '').toString().isNotEmpty) '📞 ${c['phone']}', if ((c['national_id'] ?? '').toString().isNotEmpty) '🪪 ${c['national_id']}'].join('\n')), trailing: PopupMenuButton<String>(onSelected: (v) async { if (v == 'delete') { await LocalStore.deleteClient(c['id'].toString()); await _load(); } }, itemBuilder: (_) => const [PopupMenuItem(value: 'delete', child: Text('حذف'))])));
+  Widget _card(Map<String, dynamic> c) => Card(
+    margin: const EdgeInsets.only(bottom: 10),
+    child: ListTile(
+      onTap: () => _showEditor(c),
+      leading: CircleAvatar(
+        backgroundColor: AppColors.primary.withValues(alpha: .1),
+        child: Text((c['full_name'] ?? 'م').toString().trim().isEmpty ? 'م' : (c['full_name'] ?? 'م').toString().trim().characters.first, style: const TextStyle(color: AppColors.primary)),
+      ),
+      title: Text(c['full_name'] ?? 'بدون اسم', style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: Text([if ((c['phone'] ?? '').toString().isNotEmpty) '📞 ${c['phone']}', if ((c['national_id'] ?? '').toString().isNotEmpty) '🪪 ${c['national_id']}'].join('\n')),
+      trailing: PopupMenuButton<String>(
+        onSelected: (v) async {
+          if (v != 'delete') return;
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('حذف الموكل؟'),
+              content: Text('سيتم حذف بيانات الموكل «${c['full_name'] ?? ''}». القضايا المرتبطة ستبقى، لكن سيتم فصل الربط بها.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+                FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
+              ],
+            ),
+          );
+          if (ok == true) {
+            try { await LocalStore.deleteClient(c['id'].toString()); await _load(); }
+            catch (e) { if (mounted) _snack('تعذر حذف الموكل: $e'); }
+          }
+        },
+        itemBuilder: (_) => const [PopupMenuItem(value: 'delete', child: Text('حذف'))],
+      ),
+    ),
+  );
 }

@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/supabase_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/subscription/subscription_gate.dart';
+import 'core/colors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,7 +24,39 @@ class AlAkramLawApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: 'منصة الأكرم للمحامين السوريين', debugShowCheckedModeBanner: false,
     builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child!),
-    theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1A237E)), useMaterial3: true, scaffoldBackgroundColor: const Color(0xFFF5F5F5), appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF1A237E), foregroundColor: Colors.white, centerTitle: true, elevation: 0), inputDecorationTheme: const InputDecorationTheme(filled: true, fillColor: Colors.white, border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12)))),),
-    home: isLoggedIn ? const HomeScreen() : const LoginScreen(),
+    theme: ThemeData(
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.primary,
+        primary: AppColors.primary,
+        secondary: AppColors.accent,
+        brightness: Brightness.light,
+      ),
+      useMaterial3: true,
+      scaffoldBackgroundColor: AppColors.background,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        centerTitle: true,
+        elevation: 0,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.accent,
+          foregroundColor: AppColors.primary,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      ),
+    ),
+    home: isLoggedIn
+        ? const SubscriptionGate(child: HomeScreen())
+        : const LoginScreen(),
   );
 }

@@ -11,6 +11,7 @@ grant select, insert, update, delete on public.notifications to authenticated;
 grant select, insert, update, delete on public.tasks to authenticated;
 grant select on public.legal_sources to authenticated;
 grant select on public.legal_articles to authenticated;
+revoke all on function public.search_legal_articles(text,text,integer) from public, anon;
 grant execute on function public.search_legal_articles(text,text,integer) to authenticated;
 
 -- Keep rerunning migrations safe.

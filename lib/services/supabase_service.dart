@@ -1,10 +1,13 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/supabase_config.dart';
 
 class SupabaseService {
-  static const url = String.fromEnvironment('SUPABASE_URL', defaultValue: SupabaseConfig.url);
-  static const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY', defaultValue: SupabaseConfig.publishableKey);
+  // Production Supabase endpoint is fixed here intentionally so a stale
+  // --dart-define from an old build cannot silently point the APK to another project.
+  static const url = SupabaseConfig.url;
+  static const publishableKey = SupabaseConfig.publishableKey;
 
   static bool get isConfigured => url.isNotEmpty && publishableKey.isNotEmpty;
   static SupabaseClient get client => Supabase.instance.client;
@@ -20,33 +23,192 @@ class SupabaseService {
     );
   }
 
-  static Future<AuthResponse> signIn(String email, String password) =>
-      client.auth.signInWithPassword(email: email, password: password);
+  static Future<AuthResponse> signIn(String email, String password) async {
+    final response = await _withNetworkRetry(
+      () => client.auth.signInWithPassword(
+        email: email.trim(),
+        password: password,
+      ),
+    );
+    // Ensure the profile exists even if the database trigger was not present
+    // when this account was originally created.
+    if (response.user != null) {
+      final existing = await client
+          .from('profiles')
+          .select('id')
+          .eq('id', response.user!.id)
+          .maybeSingle();
+      if (existing == null) {
+        await upsertProfile(
+          response.user!.id,
+          response.user!.email ?? email.trim(),
+          _profileFromAuthMetadata(response.user!),
+        );
+      }
+    }
+    return response;
+  }
 
   static Future<AuthResponse> signUp({
     required String email,
     required String password,
     required Map<String, dynamic> profile,
   }) async {
-    final response = await client.auth.signUp(email: email, password: password, data: profile);
+    final response = await _withNetworkRetry(
+      () => client.auth.signUp(
+        email: email.trim(),
+        password: password,
+        data: profile,
+      ),
+    );
+    // The database trigger creates the profile for confirmed/unconfirmed
+    // accounts. If a session is immediately available, also upsert it from
+    // the app so all profile fields are synchronized.
     if (response.user != null && response.session != null) {
-      await upsertProfile(response.user!.id, email, profile);
+      await upsertProfile(response.user!.id, email.trim(), profile);
     }
     return response;
   }
 
+  static Future<T> _withNetworkRetry<T>(Future<T> Function() action) async {
+    Object? lastError;
+    // DNS/network failures can be transient on mobile networks and VPNs.
+    // Retry only transport-level failures; Auth/API errors are returned immediately.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await action();
+      } catch (error) {
+        lastError = error;
+        final text = error.toString().toLowerCase();
+        final retryable = text.contains('socket') ||
+            text.contains('failed host lookup') ||
+            text.contains('host lookup') ||
+            text.contains('connection reset') ||
+            text.contains('connection closed') ||
+            text.contains('connection refused') ||
+            text.contains('timed out') ||
+            text.contains('timeout');
+        if (!retryable || attempt == 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 700 * (attempt + 1)));
+      }
+    }
+    throw lastError ?? Exception('تعذر الاتصال بالخادم.');
+  }
+
   static Future<Map<String, dynamic>?> getProfile() async {
-    final row = await client.from('profiles').select().eq('id', uid).maybeSingle();
-    return row == null ? null : Map<String, dynamic>.from(row);
+    final current = user;
+    if (current == null) return null;
+    final row = await client
+        .from('profiles')
+        .select()
+        .eq('id', current.id)
+        .maybeSingle();
+    if (row != null) return Map<String, dynamic>.from(row);
+
+    // Recover a missing profile from Auth metadata.
+    if (current.id.isNotEmpty) {
+      final data = _profileFromAuthMetadata(current);
+      try {
+        await upsertProfile(
+          current.id,
+          current.email ?? '',
+          data,
+        );
+        return {
+          'id': current.id,
+          'email': current.email ?? '',
+          ...data,
+        };
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static Map<String, dynamic> _profileFromAuthMetadata(User current) => {
+        'full_name':
+            current.userMetadata?['full_name']?.toString().trim().isNotEmpty == true
+                ? current.userMetadata!['full_name'].toString().trim()
+                : 'المحامي',
+        'phone': current.userMetadata?['phone']?.toString() ?? '',
+        'specialty': current.userMetadata?['specialty']?.toString() ?? '',
+        'bar_number': current.userMetadata?['bar_number']?.toString() ?? '',
+      };
+
+  static Future<void> updateCurrentProfile(Map<String, dynamic> data) async {
+    final current = user;
+    if (current == null) throw Exception('لا يوجد مستخدم مسجل الدخول.');
+
+    const allowed = <String>{
+      'full_name',
+      'phone',
+      'specialty',
+      'bar_number',
+      'avatar_path',
+    };
+    final safeData = <String, dynamic>{};
+    for (final entry in data.entries) {
+      if (allowed.contains(entry.key)) safeData[entry.key] = entry.value;
+    }
+    safeData['email'] = current.email;
+    safeData['updated_at'] = DateTime.now().toUtc().toIso8601String();
+    await client.from('profiles').update(safeData).eq('id', current.id);
   }
 
   static Future<void> upsertProfile(String id, String email, Map<String, dynamic> data) async {
+    final current = user;
+    if (current == null || id != current.id) {
+      throw Exception('لا يمكن تعديل ملف مستخدم آخر.');
+    }
+    const allowed = <String>{
+      'full_name',
+      'phone',
+      'specialty',
+      'bar_number',
+      'avatar_path',
+    };
+    final safeData = <String, dynamic>{};
+    for (final entry in data.entries) {
+      if (allowed.contains(entry.key)) safeData[entry.key] = entry.value;
+    }
     await client.from('profiles').upsert({
       'id': id,
-      'email': email,
-      ...data,
-      'updated_at': DateTime.now().toIso8601String(),
+      'email': email.trim(),
+      ...safeData,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     });
+  }
+
+
+  static Future<List<Map<String, dynamic>>> getCases() async {
+    final rows = await client.from('cases').select().eq('user_id', uid).order('updated_at', ascending: false);
+    return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  static Future<Map<String, dynamic>> saveCase(Map<String, dynamic> caseData) async {
+    final payload = <String, dynamic>{
+      'id': caseData['id']?.toString().isNotEmpty == true
+          ? caseData['id'].toString()
+          : DateTime.now().microsecondsSinceEpoch.toString(),
+      'user_id': uid,
+      'title': caseData['title'],
+      'case_number': caseData['caseNumber'],
+      'client_id': caseData['clientId'],
+      'client_name': caseData['client'],
+      'court': caseData['court'],
+      'opponent': caseData['opponent'],
+      'summary': caseData['summary'],
+      'notes': caseData['notes'],
+      'case_type': caseData['type'],
+      'status': caseData['status'] ?? 'جارية',
+      'created_at': caseData['createdAt'] ?? DateTime.now().toUtc().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    final row = await client.from('cases').upsert(payload).select().single();
+    return Map<String, dynamic>.from(row);
+  }
+
+  static Future<void> deleteCase(String id) async {
+    await client.from('cases').delete().eq('id', id).eq('user_id', uid);
   }
 
   static Future<List<Map<String, dynamic>>> getClients() async {
@@ -63,7 +225,7 @@ class SupabaseService {
       'email': clientData['email'],
       'address': clientData['address'],
       'notes': clientData['notes'],
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     final existingId = clientData['id']?.toString();
     if (existingId != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$').hasMatch(existingId)) {
@@ -85,18 +247,16 @@ class SupabaseService {
   static Future<Map<String, dynamic>> saveTask(Map<String, dynamic> task) async {
     final payload = <String, dynamic>{
       'user_id': uid,
-      'case_id': task['case_id'],
+      'case_id': task['caseId'] ?? task['case_id'],
       'title': task['title'],
       'description': task['description'],
-      'due_at': task['due_at'],
+      'due_at': task['dueAt'] ?? task['due_at'],
       'priority': task['priority'] ?? 'normal',
       'completed': task['completed'] ?? false,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
     final existingId = task['id']?.toString();
-    if (existingId != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$').hasMatch(existingId)) {
-      payload['id'] = existingId;
-    }
+    if (existingId != null && RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$').hasMatch(existingId)) payload['id'] = existingId;
     final row = await client.from('tasks').upsert(payload).select().single();
     return Map<String, dynamic>.from(row);
   }
@@ -106,7 +266,40 @@ class SupabaseService {
   }
 
   static Future<void> setTaskCompleted(String id, bool completed) async {
-    await client.from('tasks').update({'completed': completed, 'updated_at': DateTime.now().toIso8601String()}).eq('id', id).eq('user_id', uid);
+    await client.from('tasks').update({'completed': completed, 'updated_at': DateTime.now().toUtc().toIso8601String()}).eq('id', id).eq('user_id', uid);
+  }
+
+  static Future<List<Map<String, dynamic>>> getNotifications() async {
+    final rows = await client.from('notifications').select().eq('user_id', uid).order('created_at', ascending: false);
+    return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  static Future<void> addNotification(String title, String body, {String? relatedType, String? relatedId}) async {
+    await client.from('notifications').insert({
+      'user_id': uid, 'title': title, 'body': body,
+      'related_type': relatedType, 'related_id': relatedId,
+    });
+  }
+
+  static Future<void> upsertLinkedNotification({required String relatedType, required String relatedId, required String title, required String body}) async {
+    final existing = await client.from('notifications').select('id').eq('user_id', uid).eq('related_type', relatedType).eq('related_id', relatedId).limit(1);
+    if (existing.isNotEmpty) {
+      await client.from('notifications').update({'title': title, 'body': body, 'read': false, 'created_at': DateTime.now().toUtc().toIso8601String()}).eq('id', existing.first['id']).eq('user_id', uid);
+    } else {
+      await addNotification(title, body, relatedType: relatedType, relatedId: relatedId);
+    }
+  }
+
+  static Future<void> deleteLinkedNotifications(String relatedType, String relatedId) async {
+    await client.from('notifications').delete().eq('user_id', uid).eq('related_type', relatedType).eq('related_id', relatedId);
+  }
+
+  static Future<void> markAllNotificationsRead() async {
+    await client.from('notifications').update({'read': true}).eq('user_id', uid);
+  }
+
+  static Future<void> deleteNotification(String id) async {
+    await client.from('notifications').delete().eq('id', id).eq('user_id', uid);
   }
 
   static Future<List<String>> getLegalCategories() async {
@@ -114,13 +307,21 @@ class SupabaseService {
     return rows.map((r) => r['title']?.toString() ?? '').where((x) => x.isNotEmpty).toSet().toList();
   }
 
-  static Future<List<Map<String, dynamic>>> searchLegalArticles(String query, {String? category, int maxResults = 30}) async {
+  static Future<List<Map<String, dynamic>>> searchLegalArticles(
+    String query, {
+    String? category,
+    int maxResults = 30,
+    int offset = 0,
+  }) async {
     final result = await client.rpc('search_legal_articles', params: {
-      'q': query,
+      'q': query.trim(),
       'category': category,
       'max_results': maxResults,
+      'page_offset': offset,
     });
-    return (result as List).map((r) => Map<String, dynamic>.from(r)).toList();
+    return (result as List)
+        .map((r) => Map<String, dynamic>.from(r))
+        .toList();
   }
 
   static Future<List<Map<String, dynamic>>> browseLegalArticles({String? category, int limit = 50, int offset = 0}) async {
@@ -132,24 +333,60 @@ class SupabaseService {
     return (result as List).map((r) => Map<String, dynamic>.from(r)).toList();
   }
 
+  static String _contentType(String ext) {
+    switch (ext) {
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'gif':
+        return 'image/gif';
+      case 'pdf':
+        return 'application/pdf';
+      case 'heic':
+        return 'image/heic';
+      default:
+        return 'image/jpeg';
+    }
+  }
+
   static Future<String> uploadDocument(File file, String documentId) async {
     final ext = file.path.contains('.') ? file.path.split('.').last.toLowerCase() : 'bin';
     final path = '$uid/$documentId.$ext';
     await client.storage.from('legal-documents').upload(
       path,
       file,
-      fileOptions: const FileOptions(upsert: true),
+      fileOptions: FileOptions(upsert: true, contentType: _contentType(ext)),
     );
     return path;
   }
 
+  static void _assertOwnedStoragePath(String path) {
+    final clean = path.trim();
+    final current = user;
+    if (current == null || clean.isEmpty || !clean.startsWith('${current.id}/')) {
+      throw Exception('مسار المستند غير صالح لهذا المستخدم.');
+    }
+  }
+
+  static Future<Uint8List> downloadDocument(String path) {
+    _assertOwnedStoragePath(path);
+    return client.storage.from('legal-documents').download(path);
+  }
+
   static Future<void> deleteStorageFile(String? path) async {
     if (path == null || path.trim().isEmpty) return;
+    _assertOwnedStoragePath(path);
     await client.storage.from('legal-documents').remove([path]);
   }
 
-  static Future<String> createSignedDocumentUrl(String path, {int expiresIn = 3600}) =>
-      client.storage.from('legal-documents').createSignedUrl(path, expiresIn);
+  static Future<String> createSignedDocumentUrl(String path, {int expiresIn = 3600}) {
+    _assertOwnedStoragePath(path);
+    return client.storage.from('legal-documents').createSignedUrl(path, expiresIn);
+  }
+
+  static Future<void> upsertHearingNotification({required String hearingId, required String title, required String body}) =>
+      upsertLinkedNotification(relatedType: 'hearing', relatedId: hearingId, title: title, body: body);
 
   static Future<void> signOut() => client.auth.signOut();
 }

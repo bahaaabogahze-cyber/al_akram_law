@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/local_store.dart';
 
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({super.key});
@@ -11,53 +12,94 @@ class _SessionsScreenState extends State<SessionsScreen> {
   DateTime _selectedDay = DateTime.now();
   DateTime _focusedDay = DateTime.now();
 
-  // قائمة الجلسات
-  final List<Map<String, dynamic>> _sessions = [
-    {
-      'id': 1,
-      'court': 'محكمة البداية المدنية',
-      'client': 'أحمد محمد السيد',
-      'caseNumber': '2024/1234',
-      'time': '10:00 ص',
-      'reason': 'جلسة مرافعة',
-      'date': DateTime.now(),
-      'color': const Color(0xFF1A237E),
-      'status': 'قادمة',
-    },
-    {
-      'id': 2,
-      'court': 'محكمة الاستئناف',
-      'client': 'سمير خالد العلي',
-      'caseNumber': '2024/5678',
-      'time': '02:00 م',
-      'reason': 'استئناف حكم ابتدائي',
-      'date': DateTime.now(),
-      'color': Colors.orange,
-      'status': 'قادمة',
-    },
-    {
-      'id': 3,
-      'court': 'محكمة الأحوال الشخصية',
-      'client': 'فاطمة علي حسن',
-      'caseNumber': '2024/9012',
-      'time': '11:00 ص',
-      'reason': 'قضية طلاق',
-      'date': DateTime.now().add(const Duration(days: 1)),
-      'color': Colors.purple,
-      'status': 'قادمة',
-    },
-    {
-      'id': 4,
-      'court': 'محكمة العمال',
-      'client': 'خالد إبراهيم',
-      'caseNumber': '2024/3456',
-      'time': '09:00 ص',
-      'reason': 'نزاع عمالي',
-      'date': DateTime.now().add(const Duration(days: 2)),
-      'color': Colors.green,
-      'status': 'قادمة',
-    },
+  // قائمة الجلسات (تُحمَّل من قاعدة البيانات للمستخدم الحالي)
+  List<Map<String, dynamic>> _sessions = [];
+  List<Map<String, dynamic>> _cases = [];
+  bool _loading = true;
+
+  static const _palette = <Color>[
+    Color(0xFF071A33),
+    Colors.orange,
+    Colors.purple,
+    Colors.green,
+    Colors.teal,
+    Colors.brown,
   ];
+
+  static const _timeOptions = <String>[
+    '08:00 ص', '09:00 ص', '10:00 ص', '11:00 ص',
+    '12:00 م', '01:00 م', '02:00 م', '03:00 م',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final hearings = await LocalStore.getHearings();
+      final cases = await LocalStore.getCases();
+      final sessions = hearings.map(_fromStore).whereType<Map<String, dynamic>>().toList()
+        ..sort((a, b) => (a['date'] as DateTime).compareTo(b['date'] as DateTime));
+      if (!mounted) return;
+      setState(() {
+        _sessions = sessions;
+        _cases = cases;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _snack('تعذر تحميل الجلسات: $e', Colors.red);
+    }
+  }
+
+  Map<String, dynamic>? _fromStore(Map<String, dynamic> h) {
+    final raw = h['hearingAt']?.toString();
+    final parsed = raw == null ? null : DateTime.tryParse(raw);
+    if (parsed == null) return null;
+    final date = parsed.toLocal();
+    final key = (h['caseId'] ?? h['court'] ?? h['id'] ?? '').toString();
+    final color = _palette[key.codeUnits.fold<int>(0, (a, b) => a + b) % _palette.length];
+    return {
+      'id': h['id'].toString(),
+      'caseId': h['caseId']?.toString(),
+      'court': (h['court'] ?? '').toString(),
+      'client': (h['client'] ?? '').toString(),
+      'caseNumber': (h['caseNumber'] ?? '').toString(),
+      'reason': (h['title'] ?? '').toString(),
+      'notes': (h['notes'] ?? '').toString(),
+      'time': _formatTime(date),
+      'date': date,
+      'color': color,
+      'status': (h['status'] ?? 'قادمة').toString(),
+      'createdAt': h['createdAt'],
+    };
+  }
+
+  String _formatTime(DateTime d) {
+    final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final m = d.minute.toString().padLeft(2, '0');
+    return '${h12.toString().padLeft(2, '0')}:$m ${d.hour >= 12 ? 'م' : 'ص'}';
+  }
+
+  DateTime _combine(DateTime day, String time) {
+    final parts = time.split(' ');
+    final hm = parts[0].split(':');
+    var h = int.tryParse(hm[0]) ?? 9;
+    final m = hm.length > 1 ? int.tryParse(hm[1]) ?? 0 : 0;
+    final pm = parts.length > 1 && parts[1] == 'م';
+    if (pm && h < 12) h += 12;
+    if (!pm && h == 12) h = 0;
+    return DateTime(day.year, day.month, day.day, h, m);
+  }
+
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+  }
 
   // جلسات اليوم المحدد
   List<Map<String, dynamic>> get _selectedDaySessions {
@@ -94,10 +136,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: const Color(0xFFF4F7FA),
       appBar: AppBar(
         title: const Text('📅 الجلسات والمواعيد'),
-        backgroundColor: const Color(0xFF1A237E),
+        backgroundColor: const Color(0xFF071A33),
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -111,6 +153,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
           children: [
             // التقويم
             _buildCalendar(),
+
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              )
+            else if (_sessions.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text(
+                  'لا توجد جلسات بعد. اضغط "إضافة جلسة" لإضافة أول جلسة.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
 
             const SizedBox(height: 8),
 
@@ -127,7 +183,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ],
 
             // جلسات اليوم المحدد
-            if (_selectedDay.day != DateTime.now().day) ...[
+            if (!_isSameDate(_selectedDay, DateTime.now())) ...[
               _buildSectionHeader(
                 '📌 جلسات ${_selectedDay.day}/${_selectedDay.month}/${_selectedDay.year}',
                 _selectedDaySessions.length,
@@ -150,7 +206,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddSessionDialog(),
-        backgroundColor: const Color(0xFF1A237E),
+        backgroundColor: const Color(0xFF071A33),
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text(
           'إضافة جلسة',
@@ -168,7 +224,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
           ),
         ],
@@ -179,7 +235,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
-              color: Color(0xFF1A237E),
+              color: Color(0xFF071A33),
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
@@ -234,7 +290,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   .map((day) => Text(
                         day,
                         style: const TextStyle(
-                          color: Color(0xFF1A237E),
+                          color: Color(0xFF071A33),
                           fontWeight: FontWeight.bold,
                           fontSize: 12,
                         ),
@@ -294,7 +350,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             margin: const EdgeInsets.all(2),
             decoration: BoxDecoration(
               color: isSelected
-                  ? const Color(0xFF1A237E)
+                  ? const Color(0xFF071A33)
                   : isToday
                       ? const Color(0xFFD4AF37)
                       : Colors.transparent,
@@ -324,7 +380,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       decoration: BoxDecoration(
                         color: isSelected
                             ? Colors.white
-                            : const Color(0xFF1A237E),
+                            : const Color(0xFF071A33),
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -356,7 +412,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1A237E),
+              color: Color(0xFF071A33),
             ),
           ),
           const SizedBox(width: 8),
@@ -364,7 +420,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             padding:
                 const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A237E),
+              color: const Color(0xFF071A33),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
@@ -393,7 +449,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           border: Border(right: BorderSide(color: color, width: 4)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
             ),
           ],
@@ -407,7 +463,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -493,7 +549,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.1),
+                      color: color.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(Icons.gavel, color: color, size: 28),
@@ -505,7 +561,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
-                        color: Color(0xFF1A237E),
+                        color: Color(0xFF071A33),
                       ),
                     ),
                   ),
@@ -519,6 +575,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   Icons.access_time, 'الوقت', session['time'], color),
               _detailRow(Icons.description, 'سبب الجلسة',
                   session['reason'], color),
+              _detailRow(Icons.calendar_today, 'التاريخ',
+                  _dateLabel(session['date'] as DateTime), color),
+              if (_caseTitle(session['caseId']) != null)
+                _detailRow(Icons.folder, 'القضية المرتبطة',
+                    _caseTitle(session['caseId'])!, color),
+              if ((session['notes'] as String).isNotEmpty)
+                _detailRow(Icons.notes, 'ملاحظات', session['notes'], color),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -526,7 +589,25 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     child: ElevatedButton.icon(
                       onPressed: () {
                         Navigator.pop(context);
-                        _deleteSession(session['id']);
+                        _showSessionDialog(existing: session);
+                      },
+                      icon: const Icon(Icons.edit),
+                      label: const Text('تعديل'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _deleteSession(session['id'].toString());
                       },
                       icon: const Icon(Icons.delete),
                       label: const Text('حذف'),
@@ -546,7 +627,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       icon: const Icon(Icons.close),
                       label: const Text('إغلاق'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1A237E),
+                        backgroundColor: const Color(0xFF071A33),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -572,7 +653,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(icon, color: color, size: 18),
@@ -600,119 +681,216 @@ class _SessionsScreenState extends State<SessionsScreen> {
     );
   }
 
-  void _deleteSession(int id) {
-    setState(() {
-      _sessions.removeWhere((s) => s['id'] == id);
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('تم حذف الجلسة بنجاح'),
-        backgroundColor: Colors.red,
-      ),
-    );
+  Future<void> _deleteSession(String id) async {
+    try {
+      await LocalStore.deleteHearing(id);
+      await _load();
+      _snack('تم حذف الجلسة بنجاح', Colors.red);
+    } catch (e) {
+      _snack('تعذر حذف الجلسة: $e', Colors.red);
+    }
   }
 
-  void _showAddSessionDialog() {
-    final courtController = TextEditingController();
-    final clientController = TextEditingController();
-    final caseNumberController = TextEditingController();
-    final reasonController = TextEditingController();
-    String selectedTime = '09:00 ص';
+  String _dateLabel(DateTime d) => '${d.day}/${d.month}/${d.year}';
+
+  String? _caseTitle(dynamic caseId) {
+    if (caseId == null) return null;
+    for (final c in _cases) {
+      if (c['id'].toString() == caseId.toString()) {
+        return (c['title'] ?? '').toString();
+      }
+    }
+    return null;
+  }
+
+  void _showAddSessionDialog() => _showSessionDialog();
+
+  void _showSessionDialog({Map<String, dynamic>? existing}) {
+    final isEdit = existing != null;
+    final courtController = TextEditingController(text: existing?['court'] ?? '');
+    final clientController = TextEditingController(text: existing?['client'] ?? '');
+    final caseNumberController = TextEditingController(text: existing?['caseNumber'] ?? '');
+    final reasonController = TextEditingController(text: existing?['reason'] ?? '');
+    final notesController = TextEditingController(text: existing?['notes'] ?? '');
+    String selectedTime = existing?['time'] ?? '09:00 ص';
+    DateTime selectedDate = existing != null ? existing['date'] as DateTime : _selectedDay;
+    String? selectedCaseId = existing?['caseId'];
+    if (selectedCaseId != null && !_cases.any((c) => c['id'].toString() == selectedCaseId)) {
+      selectedCaseId = null;
+    }
+    final timeItems = _timeOptions.contains(selectedTime) ? _timeOptions : [..._timeOptions, selectedTime];
+    var saving = false;
 
     showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text(
-            'إضافة جلسة جديدة',
-            style: TextStyle(
-              color: Color(0xFF1A237E),
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildDialogField(courtController, 'اسم المحكمة',
-                    Icons.account_balance),
-                const SizedBox(height: 12),
-                _buildDialogField(
-                    clientController, 'اسم الموكل', Icons.person),
-                const SizedBox(height: 12),
-                _buildDialogField(caseNumberController, 'رقم القضية',
-                    Icons.numbers),
-                const SizedBox(height: 12),
-                _buildDialogField(
-                    reasonController, 'سبب الجلسة', Icons.description),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: selectedTime,
-                  decoration: InputDecoration(
-                    labelText: 'وقت الجلسة',
-                    prefixIcon: const Icon(Icons.access_time,
-                        color: Color(0xFF1A237E)),
-                    border: OutlineInputBorder(
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Text(
+                isEdit ? 'تعديل الجلسة' : 'إضافة جلسة جديدة',
+                style: const TextStyle(
+                  color: Color(0xFF071A33),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String?>(
+                      value: selectedCaseId,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: 'القضية (اختياري)',
+                        prefixIcon: const Icon(Icons.folder,
+                            color: Color(0xFF071A33)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                            value: null, child: Text('بدون قضية')),
+                        ..._cases.map((c) => DropdownMenuItem<String?>(
+                              value: c['id'].toString(),
+                              child: Text(
+                                (c['title'] ?? '').toString(),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
+                      ],
+                      onChanged: (v) {
+                        setDialogState(() => selectedCaseId = v);
+                        if (v == null) return;
+                        final c = _cases.firstWhere((c) => c['id'].toString() == v);
+                        courtController.text = (c['court'] ?? '').toString();
+                        clientController.text = (c['client'] ?? '').toString();
+                        caseNumberController.text = (c['caseNumber'] ?? '').toString();
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _buildDialogField(courtController, 'اسم المحكمة',
+                        Icons.account_balance),
+                    const SizedBox(height: 12),
+                    _buildDialogField(
+                        clientController, 'اسم الموكل', Icons.person),
+                    const SizedBox(height: 12),
+                    _buildDialogField(caseNumberController, 'رقم القضية',
+                        Icons.numbers),
+                    const SizedBox(height: 12),
+                    _buildDialogField(
+                        reasonController, 'سبب الجلسة', Icons.description),
+                    const SizedBox(height: 12),
+                    _buildDialogField(notesController, 'ملاحظات', Icons.notes),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: dialogContext,
+                          initialDate: selectedDate,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) {
+                          setDialogState(() => selectedDate = picked);
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'تاريخ الجلسة',
+                          prefixIcon: const Icon(Icons.calendar_today,
+                              color: Color(0xFF071A33)),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(_dateLabel(selectedDate)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedTime,
+                      decoration: InputDecoration(
+                        labelText: 'وقت الجلسة',
+                        prefixIcon: const Icon(Icons.access_time,
+                            color: Color(0xFF071A33)),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      items: timeItems
+                          .map((t) =>
+                              DropdownMenuItem(value: t, child: Text(t)))
+                          .toList(),
+                      onChanged: (v) => selectedTime = v!,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('إلغاء',
+                      style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (courtController.text.trim().isEmpty ||
+                              clientController.text.trim().isEmpty) {
+                            return;
+                          }
+                          setDialogState(() => saving = true);
+                          final reason = reasonController.text.trim();
+                          try {
+                            await LocalStore.saveHearing({
+                              'id': existing?['id'] ??
+                                  DateTime.now().microsecondsSinceEpoch.toString(),
+                              'caseId': selectedCaseId,
+                              'title': reason.isEmpty ? 'جلسة' : reason,
+                              'court': courtController.text.trim(),
+                              'client': clientController.text.trim(),
+                              'caseNumber': caseNumberController.text.trim(),
+                              'notes': notesController.text.trim(),
+                              'hearingAt': _combine(selectedDate, selectedTime)
+                                  .toUtc()
+                                  .toIso8601String(),
+                              'status': existing?['status'] ?? 'قادمة',
+                              'createdAt': existing?['createdAt'] ??
+                                  DateTime.now().toIso8601String(),
+                            });
+                            if (dialogContext.mounted) Navigator.pop(dialogContext);
+                            if (mounted) setState(() => _selectedDay = selectedDate);
+                            await _load();
+                            _snack(
+                                isEdit
+                                    ? '✅ تم تعديل الجلسة بنجاح'
+                                    : '✅ تمت إضافة الجلسة بنجاح',
+                                const Color(0xFF071A33));
+                          } catch (e) {
+                            if (dialogContext.mounted) {
+                              setDialogState(() => saving = false);
+                            }
+                            _snack('تعذر حفظ الجلسة: $e', Colors.red);
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF071A33),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  items: [
-                    '08:00 ص', '09:00 ص', '10:00 ص', '11:00 ص',
-                    '12:00 م', '01:00 م', '02:00 م', '03:00 م',
-                  ]
-                      .map((t) =>
-                          DropdownMenuItem(value: t, child: Text(t)))
-                      .toList(),
-                  onChanged: (v) => selectedTime = v!,
+                  child: Text(isEdit ? 'حفظ' : 'إضافة'),
                 ),
               ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء',
-                  style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (courtController.text.isNotEmpty &&
-                    clientController.text.isNotEmpty) {
-                  setState(() {
-                    _sessions.add({
-                      'id': _sessions.length + 1,
-                      'court': courtController.text,
-                      'client': clientController.text,
-                      'caseNumber': caseNumberController.text,
-                      'time': selectedTime,
-                      'reason': reasonController.text,
-                      'date': _selectedDay,
-                      'color': const Color(0xFF1A237E),
-                      'status': 'قادمة',
-                    });
-                  });
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('✅ تمت إضافة الجلسة بنجاح'),
-                      backgroundColor: Color(0xFF1A237E),
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1A237E),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text('إضافة'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
@@ -725,14 +903,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
       textDirection: TextDirection.rtl,
       decoration: InputDecoration(
         labelText: label,
-        prefixIcon: Icon(icon, color: const Color(0xFF1A237E)),
+        prefixIcon: Icon(icon, color: const Color(0xFF071A33)),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide:
-              const BorderSide(color: Color(0xFF1A237E), width: 2),
+              const BorderSide(color: Color(0xFF071A33), width: 2),
         ),
       ),
     );
