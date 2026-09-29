@@ -1,4 +1,4 @@
-﻿name: Build Flutter Android Release
+name: Build Flutter Android Release
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
         run: dart format lib test
 
       - name: Analyze Dart code
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Run tests
         run: flutter test

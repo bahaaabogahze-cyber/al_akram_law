@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
-import 'package:path_provider/path_provider.dart';
 import '../../core/colors.dart';
 import '../../services/local_store.dart';
 import '../../services/supabase_service.dart';
