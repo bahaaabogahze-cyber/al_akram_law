@@ -1,4 +1,4 @@
-name: Build Flutter Android Release
+﻿name: Build Flutter Android Release
 
 on:
   push:
@@ -37,8 +37,6 @@ jobs:
           flutter --version
           dart --version
           java -version
-          cd android
-          ./gradlew --version
 
       - name: Configure Android release signing (optional)
         env:
