@@ -1,6 +1,6 @@
 name: Deploy Supabase Gemini Functions
 
-"on":
+on:
   workflow_dispatch:
 
 permissions:
