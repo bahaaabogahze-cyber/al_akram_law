@@ -30,7 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _screens = [
       HomeContent(key: _homeKey, onNavigate: (index) => setState(() => _currentIndex = index)),
-       LibraryScreen(),
+      const LegalLibraryScreen(),
       const SessionsScreen(),
       const ClientsScreen(),
       const ProfileScreen(),
