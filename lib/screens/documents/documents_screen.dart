@@ -4,6 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../core/colors.dart';
 import '../../services/local_store.dart';
 import 'document_editor_screen.dart';
+import 'document_scanner_screen.dart';
+import 'document_pdf_screen.dart';
 
 class DocumentsScreen extends StatefulWidget {
   final String? caseId;
@@ -15,6 +17,11 @@ class DocumentsScreen extends StatefulWidget {
 class _DocumentsScreenState extends State<DocumentsScreen> {
   final _picker = ImagePicker();
   List<Map<String, dynamic>> _documents = [];
+  final _search = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() { _search.dispose(); super.dispose(); }
 
   @override
   void initState() {
@@ -25,9 +32,14 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   Future<void> _load() async {
     try {
       final all = await LocalStore.getDocuments();
-      final filtered = widget.caseId == null
+      final byCase = widget.caseId == null
           ? all
           : all.where((d) => d['caseId']?.toString() == widget.caseId).toList();
+      final q = _query.trim().toLowerCase();
+      final filtered = q.isEmpty ? byCase : byCase.where((d) {
+        final haystack = '${d['title'] ?? ''} ${d['notes'] ?? ''} ${d['tags'] ?? ''} ${d['ocrText'] ?? ''}'.toLowerCase();
+        return haystack.contains(q);
+      }).toList();
       await LocalStore.resolveDocumentFiles(filtered);
       if (!mounted) return;
       setState(() => _documents = filtered);
@@ -102,16 +114,17 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: _documents.isEmpty
-          ? _empty()
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _documents.length,
-                itemBuilder: (_, i) => _card(_documents[i]),
-              ),
-            ),
+      body: Column(children: [
+        Padding(padding: const EdgeInsets.fromLTRB(16, 12, 16, 4), child: TextField(
+          controller: _search, textDirection: TextDirection.rtl,
+          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'ابحث داخل المستندات ونصوص OCR...', border: OutlineInputBorder()),
+          onChanged: (v) { setState(() => _query = v); _load(); },
+        )),
+        Expanded(child: _documents.isEmpty ? _empty() : RefreshIndicator(
+          onRefresh: _load,
+          child: ListView.builder(padding: const EdgeInsets.all(16), itemCount: _documents.length, itemBuilder: (_, i) => _card(_documents[i])),
+        )),
+      ]),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
@@ -151,7 +164,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         leading: SizedBox(
           width: 64,
           height: 64,
-          child: exists
+          child: path.toLowerCase().endsWith('.pdf')
+              ? const Icon(Icons.picture_as_pdf, size: 42, color: Colors.red)
+              : exists
               ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.file(File(path), fit: BoxFit.cover))
               : signedUrl.isNotEmpty
                   ? ClipRRect(
@@ -165,11 +180,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                   : const Icon(Icons.insert_drive_file, size: 42),
         ),
         title: Text(d['title'] ?? 'مستند'),
-        subtitle: Text('${d['notes'] ?? ''}\n${_dateLabel(d['createdAt'])}', maxLines: 2, overflow: TextOverflow.ellipsis),
+        subtitle: Text('${d['notes'] ?? (d['ocrText']?.toString().isNotEmpty == true ? d['ocrText'].toString() : '')}\n${_dateLabel(d['createdAt'])}', maxLines: 2, overflow: TextOverflow.ellipsis),
         isThreeLine: true,
         onTap: () async {
+          final isPdf = (d['path']?.toString() ?? d['storagePath']?.toString() ?? '').toLowerCase().endsWith('.pdf');
           await Navigator.push(context, MaterialPageRoute(
-            builder: (_) => DocumentEditorScreen(existing: d),
+            builder: (_) => isPdf ? DocumentPdfScreen(document: d) : DocumentEditorScreen(existing: d),
           ));
           _load();
         },
@@ -191,6 +207,15 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       builder: (_) => SafeArea(
         child: Wrap(
           children: [
+            ListTile(
+              leading: const Icon(Icons.document_scanner, color: AppColors.primary),
+              title: const Text('الماسح القانوني متعدد الصفحات + OCR عربي'),
+              onTap: () async {
+                Navigator.pop(context);
+                final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => DocumentScannerScreen(caseId: widget.caseId)));
+                if (result == true) _load();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.camera_alt),
               title: const Text('تصوير بالكاميرا'),

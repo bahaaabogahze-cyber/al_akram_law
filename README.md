@@ -1,17 +1,13 @@
-# al_akram_law
+# AL AKRAM V2.5 – Gemini & Secret-Key Cleanup
 
-A new Flutter project.
+هذا المشروع يستخدم Google Gemini من خلال Supabase Edge Functions.
 
-## Getting Started
+## مفاتيح الوصول المستخدمة
+- Flutter يستخدم Supabase Publishable Key فقط، مع جلسة المستخدم وسياسات RLS.
+- وظيفتا `analyze-case` و`legal-assistant` تقرآن `GEMINI_API_KEY` من Supabase Edge Function Secrets.
+- لا يستخدم تطبيق Flutter أو وظائفه مفتاح Supabase Secret API Key / service_role.
+- أزيل سكربت الصيانة `fix_articles.py` لأنه كان يحتاج مفتاح Supabase ذي صلاحيات مرتفعة، وهو غير مطلوب لتشغيل التطبيق.
 
-This project is a starting point for a Flutter application.
+راجع `docs/SECURITY_V2.5_AR.md` و`docs/GEMINI_V2.4_SETUP_AR.md` قبل النشر.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+**مهم:** حذف الملف من هذه النسخة لا يمحو ظهوره من سجل GitHub السابق. يجب إلغاء المفتاح الذي سبق نشره، ثم تنظيف سجل Git إذا أردت إزالة الملف من تاريخ المستودع.

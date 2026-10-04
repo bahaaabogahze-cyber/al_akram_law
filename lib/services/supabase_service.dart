@@ -61,12 +61,9 @@ class SupabaseService {
         data: profile,
       ),
     );
-    // The database trigger creates the profile for confirmed/unconfirmed
-    // accounts. If a session is immediately available, also upsert it from
-    // the app so all profile fields are synchronized.
-    if (response.user != null && response.session != null) {
-      await upsertProfile(response.user!.id, email.trim(), profile);
-    }
+    // The database trigger creates the profile and copies Auth metadata.
+    // Do not issue a client-side upsert here: migration 0011 intentionally
+    // withholds UPDATE permission on profiles.id.
     return response;
   }
 
@@ -170,12 +167,32 @@ class SupabaseService {
     for (final entry in data.entries) {
       if (allowed.contains(entry.key)) safeData[entry.key] = entry.value;
     }
-    await client.from('profiles').upsert({
-      'id': id,
+    final values = <String, dynamic>{
       'email': email.trim(),
       ...safeData,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
-    });
+    };
+
+    // Use UPDATE for an existing row and INSERT only for legacy accounts
+    // whose profile row is genuinely missing. This avoids ON CONFLICT UPDATE
+    // attempting to update the protected primary-key column (profiles.id).
+    final existing = await client
+        .from('profiles')
+        .select('id')
+        .eq('id', id)
+        .maybeSingle();
+    if (existing != null) {
+      await client.from('profiles').update(values).eq('id', id);
+      return;
+    }
+
+    try {
+      await client.from('profiles').insert({'id': id, ...values});
+    } on PostgrestException catch (error) {
+      // A concurrent trigger/recovery may have inserted the same row.
+      if (error.code != '23505') rethrow;
+      await client.from('profiles').update(values).eq('id', id);
+    }
   }
 
 

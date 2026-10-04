@@ -138,7 +138,7 @@ class LocalStore {
     return _readList(_documentsKey);
   }
   static Future<void> saveDocument(Map<String, dynamic> item) async {
-    if (_remote) { await SupabaseService.client.from('documents').upsert({'id': item['id'], 'user_id': _uid, 'case_id': item['caseId'], 'title': item['title'], 'notes': item['notes'], 'tags': item['tags'], 'storage_path': item['storagePath'], 'created_at': item['createdAt'] ?? DateTime.now().toUtc().toIso8601String(), 'updated_at': DateTime.now().toUtc().toIso8601String()}); return; }
+    if (_remote) { await SupabaseService.client.from('documents').upsert({'id': item['id'], 'user_id': _uid, 'case_id': item['caseId'], 'title': item['title'], 'notes': item['notes'], 'tags': item['tags'], 'storage_path': item['storagePath'], 'mime_type': item['mimeType'] ?? 'application/pdf', 'ocr_text': item['ocrText'] ?? '', 'created_at': item['createdAt'] ?? DateTime.now().toUtc().toIso8601String(), 'updated_at': DateTime.now().toUtc().toIso8601String()}); return; }
     final list = await getDocuments(); final id = item['id']; final i = list.indexWhere((e) => e['id'] == id); if (i >= 0) list[i] = item; else list.insert(0, item); await _writeList(_documentsKey, list);
   }
   static Future<void> deleteDocument(String id) async {
@@ -324,4 +324,17 @@ class LocalStore {
     list.removeWhere((e) => e['id'].toString() == id);
     await _writeList(_notificationsKey, list);
   }
+
+  static Future<List<Map<String, dynamic>>> getLegalDrafts() => _readList('legal_drafts_v1');
+
+  static Future<void> saveLegalDraft(Map<String, dynamic> draft) async {
+    final list = await getLegalDrafts();
+    final id = draft['id']?.toString() ?? DateTime.now().microsecondsSinceEpoch.toString();
+    final normalized = Map<String, dynamic>.from(draft)..['id'] = id;
+    final index = list.indexWhere((item) => item['id']?.toString() == id);
+    if (index >= 0) { list[index] = normalized; } else { list.insert(0, normalized); }
+    await _writeList('legal_drafts_v1', list);
+  }
+
+
 }

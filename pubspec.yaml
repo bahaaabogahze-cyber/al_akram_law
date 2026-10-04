@@ -1,7 +1,7 @@
 name: al_akram_law
 description: تطبيق الأكرم للمحاماة
 publish_to: 'none'
-version: 1.0.0+2
+version: 2.7.1+11
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -13,6 +13,10 @@ dependencies:
   supabase_flutter: ^2.10.0
   cupertino_icons: ^1.0.6
   image_picker: ^1.0.7
+  cunning_document_scanner: ^2.8.0
+  flutter_tesseract_ocr: ^0.4.31
+  pdf: ^3.11.3
+  printing: ^5.14.2
   image_cropper: ^12.2.1
   path_provider: ^2.1.4
   url_launcher: ^6.3.1

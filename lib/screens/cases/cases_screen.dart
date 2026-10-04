@@ -5,6 +5,7 @@ import '../../core/colors.dart';
 import '../../services/local_store.dart';
 import 'add_case_screen.dart';
 import 'case_details_screen.dart';
+import 'lawsuit_requirements_screen.dart';
 
 class CasesScreen extends StatefulWidget {
   const CasesScreen({super.key});
@@ -81,6 +82,18 @@ class _CasesScreenState extends State<CasesScreen> {
       appBar: AppBar(
         title: const Text('القضايا'),
         actions: [
+          IconButton(
+            tooltip: 'دليل الأوراق والطوابع',
+            icon: const Icon(Icons.rule_folder_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const LawsuitRequirementsScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
       ),
